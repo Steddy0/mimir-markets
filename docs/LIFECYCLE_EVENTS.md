@@ -21,6 +21,10 @@ Every market mutation event for a claim carries an explicit `revision` field (u3
 - Rejected or reverted invocations do not change the stored revision, state, or escrow.
 - Indexers can use `revision` to detect gaps and order events for the same claim without relying on ledger sequence alone.
 
+## Claim Transition History
+
+Events are not the only record of a claim's lifecycle. `mimir-market` also stores each successful transition (create, each challenge, resolve, cancel, deadline expiry) on chain under a stable identity `(claim_id, seq)` and serves it through the bounded, cursor-paginated view `get_claim_history(claim_id, cursor, limit)`. A page costs O(page), never O(challengers), and reports incomplete history explicitly (`next_cursor`, `from_genesis`, `missing_seq`). Indexers can use it to backfill or verify a claim's transitions without replaying every event. See [`CLAIM_HISTORY.md`](CLAIM_HISTORY.md).
+
 ## mimir-market Events
 
 ### Core Lifecycle Events

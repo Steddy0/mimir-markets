@@ -4,12 +4,14 @@
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 
 use crate::admin;
+use crate::claim_history;
 use crate::claims;
 use crate::escrow;
 use crate::resolve;
 use crate::storage;
 use crate::types::{
-    Challenger, ChallengerPage, Claim, ClaimFeeView, CreateParams, Error, FeePolicy,
+    Challenger, ChallengerPage, Claim, ClaimFeeView, ClaimHistoryPage, ClaimPreflight,
+    CreateParams, Error, FeePolicy,
     MarketConfig, PayoutQuote, PendingFeePolicy, PendingOracle, PlatformStats, Verdict,
     WinnerSide, MAX_BATCH_SIZE,
 };
@@ -212,7 +214,35 @@ impl MimirMarket {
         if !storage::is_initialized(&env) {
             return Err(Error::NotInitialized);
         }
-        Ok(storage::creator_claims_page(&env, &creator, offset, limit))
+        let (ids, total) = storage::get_creator_claims(&env, &creator, offset, limit);
+        Ok((ids, total.min(u32::MAX as u64) as u32))
+    }
+
+    /// One bounded page of a claim's transition history (#781), oldest first.
+    ///
+    /// Each transition carries its stable identity `(claim_id, seq)`; `seq`
+    /// starts at 1 and is never reused, so a reference stays valid as new
+    /// transitions are appended. Returns transitions with `seq > cursor`
+    /// (`cursor = 0` for the first page; then the previous `next_cursor`).
+    ///
+    /// Bounded: at most `MAX_HISTORY_PAGE_SIZE` (50) entries per call;
+    /// `limit = 0` means that maximum and a larger `limit` is refused with
+    /// `Error::HistoryPageTooLarge` before any storage read. The read opens one
+    /// entry per returned transition plus the claim's history head and never
+    /// the challenger roster, so its cost is O(page), not O(challengers).
+    ///
+    /// Incomplete history is explicit: `next_cursor` is `Some` while later
+    /// transitions exist, `from_genesis == false` means transitions before
+    /// seq 1 were never recorded on chain (claim predates history tracking),
+    /// and `missing_seq` names an archived entry the page stopped at.
+    /// Unknown claim ids return `Error::ClaimNotFound`.
+    pub fn get_claim_history(
+        env: Env,
+        claim_id: u64,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<ClaimHistoryPage, Error> {
+        claim_history::get_page(&env, claim_id, cursor, limit)
     }
 
     /// The claim's verdict with its explicit encoding version.
