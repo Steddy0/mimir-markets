@@ -7,6 +7,7 @@ use crate::admin;
 use crate::claim_history;
 use crate::claims;
 use crate::escrow;
+use crate::fees;
 use crate::resolve;
 use crate::storage;
 use crate::types::{
@@ -193,6 +194,30 @@ impl MimirMarket {
 
     pub fn get_claim(env: Env, claim_id: u64) -> Result<Claim, Error> {
         storage::get_claim(&env, claim_id)
+    }
+
+    /// Canonical statement for independent client verification.
+    ///
+    /// Returns the public question, the immutable `context_hash` as
+    /// `source_commitment`, the deadline, and a v1 SHA-256 digest over exactly
+    /// those inputs. See `util::claim_statement_digest` for the byte encoding.
+    /// The statement is stable for the life of the claim, including after
+    /// challenge, resolution, or cancellation. Unknown ids fail with
+    /// `Error::ClaimNotFound`.
+    pub fn get_claim_statement(env: Env, claim_id: u64) -> Result<ClaimStatement, Error> {
+        claims::get_claim_statement(&env, claim_id)
+    }
+
+    /// Alias of `get_claim_statement`, named for callers that export a
+    /// statement to an indexer or worker.
+    pub fn export_claim_statement(env: Env, claim_id: u64) -> Result<ClaimStatement, Error> {
+        claims::get_claim_statement(&env, claim_id)
+    }
+
+    /// Digest-only view for callers that need just the canonical v1 digest
+    /// without marshalling the full statement.
+    pub fn get_claim_statement_digest(env: Env, claim_id: u64) -> Result<BytesN<32>, Error> {
+        Ok(claims::get_claim_statement(&env, claim_id)?.digest)
     }
 
     /// Paginated list of claim ids created by `creator`, in creation order.
@@ -416,6 +441,14 @@ impl MimirMarket {
         storage::fee_policy(&env)
     }
 
+    /// Bounded fee-policy compatibility query for generated clients.
+    ///
+    /// Pure read returning supported policy fields, hard caps, timelock,
+    /// USDC escrow scale, rounding semantics, and current/pending policy state.
+    pub fn get_fee_policy_compatibility(env: Env) -> Result<FeePolicyCompatibility, Error> {
+        fees::fee_policy_compatibility(&env)
+    }
+
     pub fn get_pending_fee_policy(env: Env) -> Option<PendingFeePolicy> {
         storage::pending_fee_policy(&env)
     }
@@ -440,7 +473,24 @@ impl MimirMarket {
         storage::withdrawable(&env, &who)
     }
 
+    /// Batched withdrawable balances, position-stable with `addrs`.
+    ///
+    /// Refuses the whole call with `Error::BatchTooLarge` above
+    /// `MAX_BATCH_SIZE`; unknown addresses return `0` in their slot.
+    pub fn get_withdrawable_batch(env: Env, addrs: Vec<Address>) -> Result<Vec<i128>, Error> {
+        storage::get_withdrawable_batch(&env, addrs)
+    }
+
     pub fn get_accrued_fees(env: Env, who: Address) -> i128 {
         storage::accrued_fees(&env, &who)
+    }
+
+    /// Read-only descriptor of the currently approved oracle resolution and
+    /// claim expiration policy enforced by `claims` and `resolve`.
+    ///
+    /// Pure read: requires no auth, touches no storage, moves no USDC, and
+    /// preserves oracle-only resolution and existing withdrawal rights.
+    pub fn get_resolution_expiration_policy(_env: Env) -> ResolutionExpirationPolicy {
+        resolve::resolution_expiration_policy()
     }
 }
